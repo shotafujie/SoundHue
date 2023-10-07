@@ -7,50 +7,116 @@ const ctx = canvas.getContext('2d');
 let audioContext = new AudioContext();
 let analyser = audioContext.createAnalyser();
 let source;
-let audioBuffer; 
+let audioBuffer;
 let dataArray;
 
-let isPlaying = false; 
+let isPlaying = false;
+
+let gamepad = null;
+let lastVolume = 0;
+let beatThreshold = 0.2; 
+window.addEventListener("gamepadconnected", function(e) {
+  gamepad = e.gamepad;
+  console.log("Gamepad connected:", gamepad);
+});
+
+window.addEventListener("gamepaddisconnected", function(e) {
+  console.log("Gamepad disconnected:", e.gamepad);
+  gamepad = null;
+});
 
 function createSource() {
-    if (source) {
-        source.disconnect(); // 既存のsourceがあれば切断します。
-    }
-    source = audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(analyser);
-    analyser.connect(audioContext.destination);
+  if (source) {
+    source.disconnect();
+  }
+  source = audioContext.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(analyser);
+  analyser.connect(audioContext.destination);
 }
 
 audioFileInput.addEventListener('change', function (event) {
-    const file = event.target.files[0];
-    const reader = new FileReader();
-    reader.onload = function (fileEvent) {
-        const arrayBuffer = fileEvent.target.result;
-        audioContext.decodeAudioData(arrayBuffer, function (buffer) {
-            audioBuffer = buffer; 
-            createSource(); 
-        });
-    };
-    reader.readAsArrayBuffer(file);
+  const file = event.target.files[0];
+  const reader = new FileReader();
+  reader.onload = function (fileEvent) {
+    const arrayBuffer = fileEvent.target.result;
+    audioContext.decodeAudioData(arrayBuffer, function (buffer) {
+      audioBuffer = buffer;
+      createSource();
+    });
+  };
+  reader.readAsArrayBuffer(file);
 });
 
 playButton.addEventListener('click', function() {
-    if (!isPlaying) {
-        createSource(); 
-        audioContext.resume().then(() => {
-            source.start(0);
-            isPlaying = true;
-        });
-    }
+  if (!isPlaying) {
+    createSource();
+    audioContext.resume().then(() => {
+      source.start(0);
+      isPlaying = true;
+    });
+  }
 });
 
 stopButton.addEventListener('click', function() {
-    if (isPlaying) {
-        source.stop();
-        isPlaying = false;
-    }
+  if (isPlaying) {
+    source.stop();
+    isPlaying = false;
+  }
 });
+
+analyser.fftSize = 2048;
+const bufferLength = analyser.frequencyBinCount;
+dataArray = new Uint8Array(bufferLength);
+
+function update() {
+  requestAnimationFrame(update);
+
+  analyser.getByteFrequencyData(dataArray);
+
+  let volume = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+
+  let isBeat = false;
+  if (volume > lastVolume * (1 + beatThreshold)) {
+    isBeat = true;
+  }
+  lastVolume = volume;
+
+  let magnitude = volume / 255;
+
+  if (gamepad && "vibrationActuator" in gamepad) {
+    console.log("Trying to vibrate");
+    gamepad.vibrationActuator.playEffect("dual-rumble", {
+      startDelay: 0,
+      duration: isBeat ? 500 : 100,
+      weakMagnitude: magnitude,
+      strongMagnitude: magnitude
+    });
+  }
+}
+
+function drawFrequency() {
+  requestAnimationFrame(drawFrequency);
+
+  analyser.getByteFrequencyData(dataArray);
+
+  ctx.fillStyle = 'rgb(200, 200, 200)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const barWidth = (canvas.width / bufferLength) * 2.5;
+  let barHeight;
+  let x = 0;
+
+  for(let i = 0; i < bufferLength; i++) {
+    barHeight = dataArray[i];
+
+    const frequency = i * audioContext.sampleRate / analyser.fftSize;
+    ctx.fillStyle = getColorForFrequency(frequency);
+    ctx.fillRect(x, canvas.height - barHeight / 2, barWidth, barHeight / 2);
+
+    x += barWidth + 1;
+  }
+}
 
 function getColorForFrequency(frequency) {
     if (frequency < 500) {
@@ -84,64 +150,6 @@ function getColorForFrequency(frequency) {
     }
 }
 
-
-analyser.fftSize = 2048;
-const bufferLength = analyser.frequencyBinCount;
-dataArray = new Uint8Array(bufferLength);
-
-function drawWaveform() {
-    requestAnimationFrame(drawWaveform);
-
-    analyser.getByteTimeDomainData(dataArray);
-
-    ctx.fillStyle = 'rgb(200, 200, 200)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.lineWidth = 2;
-    ctx.beginPath(); 
-
-    for (let i = 0; i < bufferLength; i++) {
-        const v = dataArray[i] / 128.0;
-        const y = v * canvas.height / 2;
-
-        if (i === 0) {
-            ctx.moveTo(0, y);
-        } else {
-            ctx.lineTo(i, y);
-        }
-
-        const frequency = i * audioContext.sampleRate / analyser.fftSize;
-        ctx.strokeStyle = getColorForFrequency(frequency);
-    }
-
-    ctx.stroke(); // 
-}
-function draw() {
-    requestAnimationFrame(draw);
-
-    analyser.getByteFrequencyData(dataArray);
-
-    ctx.fillStyle = 'rgb(200, 200, 200)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const barWidth = (canvas.width / bufferLength) * 2.5;
-    let barHeight;
-    let x = 0;
-
-    for(let i = 0; i < bufferLength; i++) {
-        barHeight = dataArray[i];
-
-        const frequency = i * audioContext.sampleRate / analyser.fftSize;
-        ctx.fillStyle = getColorForFrequency(frequency);
-        ctx.fillRect(x, canvas.height - barHeight / 2, barWidth, barHeight / 2);
-
-        x += barWidth + 1;
-    }
-}
-
-
-
-drawWaveform();
-draw();
-
+update();
+drawFrequency();
 
